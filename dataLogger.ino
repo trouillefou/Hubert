@@ -129,7 +129,7 @@ void loop() {
   ler_PB10();
   attachInterrupt(digitalPinToInterrupt(2), add_pbCount, RISING);
   
-  delay(1000*60*30); //espera 20min antes de realizar as medições novamente (i.e., 72 medições/dia)
+  delay(1000*60*19); //espera 19 min. antes de realizar as medições novamente (i.e., ~72 medições/dia)
 }
 
 // RTC: -----------------------------------------------------------------
