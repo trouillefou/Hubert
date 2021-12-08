@@ -16,10 +16,19 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
-//#include <TimeLib.h>
 #include <DHT.h>
+#include <DS1307.h>
+#include <DSM501.h>
+
+DS1307 rtc(A4, A5);
 
 unsigned int id = 0; // ID da placa
+
+// DSM501-A (material particulado)-------------------------------------
+#define DSM501_PM10 3
+#define DSM501_PM25 4
+
+DSM501 dsm501(DSM501_PM10, DSM501_PM25);
 
 // SV10 (anemômetro)----------------------------------------------------
 # define Hall sensor 2
@@ -42,7 +51,6 @@ void add_pbCount() {
   delay(10); // debouncing
 }
 
-// File root;
 void save_file(String filename, float sensorData, String sensorString, int isString) {
   File dataFile = SD.open(filename, FILE_WRITE);
 
@@ -64,6 +72,12 @@ void save_file(String filename, float sensorData, String sensorString, int isStr
 }
 
 void setup() {
+  // RTC
+  rtc.halt(false);
+  rtc.setSQWRate(SQW_RATE_1);
+  rtc.enableSQW(true);
+  set_hora();
+  
   // Inicialzando comunicação serial (USB, opcional)
   Serial.begin(9600);
   while (!Serial) {
@@ -71,119 +85,83 @@ void setup() {
   }
   
   Serial.println("inicializando SD...");
-  
   if (!SD.begin(4)) {
     Serial.println("falha!");
     while(1) { }; // loop infinito até reset
   }
   Serial.println("SD OK");
 
-  // root = SD.open("/"); // Diretório raíz
-
-  /* printDirectory(root, 1); */
-
-  analogWrite(A2, LOW);
   pinMode(2, INPUT); // pino conectado ao anemômetro, deve ter supporte interrupt
-  dht.begin(); // inicia DHT11
-
-  analogWrite(A3, HIGH);
-  pinMode(2, INPUT);
-  attachInterrupt(digitalPinToInterrupt(3), add_pbCount, RISING);
+  pinMode(A2, OUTPUT);
+  pinMode(A3, OUTPUT);
+  
+  dht.begin(); // inicializa DHT11
+  dsm501.begin(MIN_WIN_SPAN); // inicializa DSM501
+  
+  liga_sensor(1);
+  attachInterrupt(digitalPinToInterrupt(2), add_pbCount, RISING);
 }
-
-char Time[]     = "  :  :  ";
-char Calendar[] = "  /  /20  ";
-byte i, second, minute, hour, date, month, year;
 
 void loop() {
     
   // leitura ozônio (pino A0)
   ler_MQ131();
-  delay(5000);
+  delay(1000);
 
   // leitura material particulado
-  //ler_DSM501();
+  detachInterrupt(digitalPinToInterrupt(2));
+  ler_DSM501();
+  attachInterrupt(digitalPinToInterrupt(2), add_pbCount, RISING);
+  delay(1000);
 
   // leitura temperatura e umidade
   ler_DHT11();
-  delay(5000);
+  delay(1000);
 
   // leitura anemômetro
+  detachInterrupt(digitalPinToInterrupt(2));
   ler_SV10();
+  attachInterrupt(digitalPinToInterrupt(2), add_pbCount, RISING);
+  delay(1000);
 
   // leitura pluviômetro
   detachInterrupt(digitalPinToInterrupt(2));
   ler_PB10();
   attachInterrupt(digitalPinToInterrupt(2), add_pbCount, RISING);
-
-  delay(5000);
+  
+  delay(1000*60*30); //espera 20min antes de realizar as medições novamente (i.e., 72 medições/dia)
 }
 
 // RTC: -----------------------------------------------------------------
 
-String DS1307_bcd2dec(){
-  // Convert BCD to decimal
-  second = (second >> 4) * 10 + (second & 0x0F);
-  minute = (minute >> 4) * 10 + (minute & 0x0F);
-  hour   = (hour >> 4)   * 10 + (hour & 0x0F);
-  date   = (date >> 4)   * 10 + (date & 0x0F);
-  month  = (month >> 4)  * 10 + (month & 0x0F);
-  year   = (year >> 4)   * 10 + (year & 0x0F);
-  // End conversion
-  Time[7]     = second % 10 + 48;
-  Time[6]     = second / 10 + 48;
-  Time[4]      = minute % 10 + 48;
-  Time[3]      = minute / 10 + 48;
-  Time[1]      = hour   % 10 + 48;
-  Time[0]      = hour   / 10 + 48;
-  Calendar[9] = year   % 10 + 48;
-  Calendar[8] = year   / 10 + 48;
-  Calendar[4]  = month  % 10 + 48;
-  Calendar[3]  = month  / 10 + 48;
-  Calendar[1]  = date   % 10 + 48;
-  Calendar[0]  = date   / 10 + 48;
-  String hora = String(Time)+" "+String(Calendar);
-  return hora;
+void set_hora() {
+  char compDate[] = __DATE__;
+  char compTime[] = __TIME__;
+  int rtc_dia, rtc_ano, rtc_mes, rtc_hora, rtc_min, rtc_sec;
+  rtc_dia = (int)compDate[4]*10+compDate[5];
+  rtc_mes = (\
+    __DATE__[2] == 'n' ? (__DATE__[1] == 'a' ? 1 : 6) \
+    : __DATE__[2] == 'b' ? 2 \
+    : __DATE__[2] == 'r' ? (__DATE__[0] == 'M' ? 3 : 4) \
+    : __DATE__[2] == 'y' ? 5 \
+    : __DATE__[2] == 'l' ? 7 \
+    : __DATE__[2] == 'g' ? 8 \
+    : __DATE__[2] == 'p' ? 9 \
+    : __DATE__[2] == 't' ? 10 \
+    : __DATE__[2] == 'v' ? 11 \
+    : 12);
+  rtc_ano = (int)compDate[9]*10+(int)compDate[10];
+  rtc_hora = (int)compTime[0]*10+(int)compTime[1];
+  rtc_min = (int)compTime[3]*10+(int)compTime[4];
+  rtc_sec = (int)compTime[6]*10+(int)compTime[7];
+  rtc.setTime(rtc_hora, rtc_min, rtc_sec);     //Define o horario
+  rtc.setDate(rtc_dia, rtc_mes, rtc_ano);   //Define o dia, mes e ano
 }
 
 String get_hora() {
-    Wire.beginTransmission(0x68);     // Start I2C protocol with DS1307 address
-    Wire.write(0);                    // Send register address
-    Wire.endTransmission(false);      // I2C restart
-    Wire.requestFrom(0x68, 7);        // Request 7 bytes from DS1307 and release I2C bus at end of reading
-    second = Wire.read();             // Read seconds from register 0
-    minute = Wire.read();             // Read minuts from register 1
-    hour   = Wire.read();             // Read hour from register 2
-    Wire.read();                      // Read day from register 3 (not used)
-    date   = Wire.read();             // Read date from register 4
-    month  = Wire.read();             // Read month from register 5
-    year   = Wire.read();             // Read year from register 6
-    return DS1307_bcd2dec();          // Return time & calendar date
-}
-
-
-void printDirectory(File dir, int numTabs) {
-  while (true) {
-
-    File entry =  dir.openNextFile();
-    if (! entry) {
-      // no more files
-      break;
-    }
-    for (uint8_t i = 0; i < numTabs; i++) {
-      Serial.print('\t');
-    }
-    Serial.print(entry.name());
-    if (entry.isDirectory()) {
-      Serial.println("/");
-      printDirectory(entry, numTabs + 1);
-    } else {
-      // files have sizes, directories do not
-      Serial.print("\t\t");
-      Serial.println(entry.size(), DEC);
-    }
-    entry.close();
-  }
+  String hora = rtc.getTimeStr();
+  String data = rtc.getDateStr();
+  return data+" "+hora;
 }
 
 // Sensor de ozônio-------------------------------------------------------------------
@@ -197,13 +175,13 @@ void ler_MQ131() {
 
 // Anemômetro-----------------------------------------------------------------------------
 void ler_SV10() {
-  liga_SV10(1); // pino D2 passa a ler SV10
+  liga_sensor(2); // pino D2 passa a ler SV10
   String dataHora = get_hora();
   float windSpeed; // armazena velocidade do vento (m/s)
   windvelocity();
   unsigned int RPM = (svCounter)*60/(period/1000);
   windSpeed = ((4 * pi * radius * RPM)/60) / 1000;
-  liga_SV10(0);  // pino D2 volta a ler PB10
+  liga_sensor(1);  // pino D2 volta a ler PB10
 
   save_file("sv10.csv", windSpeed, "", 0);       
 }
@@ -223,12 +201,23 @@ void add_svCounter(){
   svCounter++;
 }
 
-void liga_SV10(int i) {
-  if (i) {
-    digitalWrite(A3, LOW);
-    digitalWrite(A2, HIGH);
-  } else {
+void liga_sensor(int idx) {
+  if (idx==1) {  // liga PB10
+    digitalWrite(A2, LOW);
+    pinMode(A2, INPUT);
+    pinMode(A3, OUTPUT);
     digitalWrite(A3, HIGH);
+  }     
+  if (idx==2) {   // liga SV10
+    digitalWrite(A3, LOW);
+    pinMode(A3, INPUT);
+    pinMode(A2, OUTPUT);
+    digitalWrite(A2, HIGH);
+  }
+  if (idx==3) {  // liga DSM501-A
+    pinMode(A3, OUTPUT);
+    pinMode(A2, OUTPUT);
+    digitalWrite(A3, LOW);
     digitalWrite(A2, LOW);
   }
 }
@@ -248,12 +237,29 @@ void ler_DHT11() {
 
 // Sensor de material particulado----------------------------------------------------------
 void ler_DSM501() {
-  delay(1000); // placeholder
+  liga_sensor(3);
+  delay(65000);
+  // call dsm501 to handle updates.
+  dsm501.update();
+  
+  // dsm501.getParticleWeight(0) get PM density of particles over 1.0 μm
+  
+  // dsm501.getParticleWeight(1) = get PM density of particles over 2.5 μm
+  
+  // dsm501.getAQI() = Air Quality Index
+  
+  // dsm501.getPM25() = PM2.5 density of particles between 1.0~2.5 μm
+ 
+  String dsmData = String(dsm501.getParticleWeight(0))+';';
+  dsmData += String(dsm501.getParticleWeight(1))+';';
+  dsmData += String(dsm501.getAQI())+';';
+  dsmData += String(dsm501.getPM25());
+  save_file("dsm501.csv", 0, dsmData, 1);
+  liga_sensor(1);
 }
 
 // Pluviômetro------------------------------------------------------------------------------
 void ler_PB10() {
   save_file("pb10.csv", pbCounter*0.25, "", 0); // cada ativação => 0.25 mm
-  Serial.println(pbCounter*0.25);
   pbCounter = 0;
 }
