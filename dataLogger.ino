@@ -166,8 +166,6 @@ String get_hora() {
 
 // Sensor de ozônio-------------------------------------------------------------------
 void ler_MQ131() {
-  String dataHora = get_hora();
-  
   float sensorData = 5*analogRead(A0)/1023.0; // Converte saída do ADC (0-1023) para voltagem 
 
   save_file("mq131.csv", sensorData, "", 0);
