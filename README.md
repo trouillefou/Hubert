@@ -11,4 +11,5 @@ Sensores utilizados:
 - SV10 e PB10: anemômetro de copos e pluviômetro de báscula.
 
 Diagrama de montagem:
-![Montagem](https://user-images.githubusercontent.com/94772458/145338300-7214cdcd-c0b7-42ba-a5ef-c46bd8a073c9.png)
+
+![schematic](https://user-images.githubusercontent.com/94772458/145476771-70985659-6301-423f-b4dc-afd165ce0f9a.png)
